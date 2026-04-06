@@ -1,13 +1,5 @@
 # Decided work conventions in the group:
 
-## Versions:
-- We use **java 25**
-- We use **springframework 4.0.2** as our server framework
-- We use **Junit 5.10.1** as our test framework
-- We use **spring.dependency-management 1.1.7**
-- We use **Spotless 8.2.1** for stylechecking
-
-
 ## Way of working:
 0) Create an issue if a task is identified
     - Every issue should have a useful description
