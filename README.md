@@ -628,6 +628,36 @@ python3 ~/bachelor-thesis/Missions/scripts/compare_multiple_groups.py   ~/bachel
 
 ---
 
-## Short README-Style Summary
+## How to setup GPS-spoofing environment
+
+Go to the px4_ros_ws dir. Run the following commands. 
+
+For linking the package from the github repo:
+```bash
+ln -s ~/projects/bachelor-thesis/src/GPS-spoofing/constant_gps_bias .
+```
+
+For building:
+```bash
+colcon build --packages-select constant_gps_bias --symlink-install
+```
+
+## How to run GPS-spoofing
+Start the simulation and everythin else like mentioned in the start of the README.
+
+For starting the spoofing (for now it just displays the GPS pos) use the following commands (while in the px4_ros_ws dir).
+
+First source:
+```bash
+source install/setup.bash
+```
+
+Then start the spoofing:
+```bash
+ros2 run constant_gps_bias spoof
+```
+The source code is found in ```spoof.cpp```.
+
+## Summary
 
 A repeatable rectangular mission was created in QGroundControl and flown in PX4/Gazebo simulation. Each run produced a PX4 `.ulg` log, which was converted into CSV files and analyzed with Python. The first script measured deviation between the estimated path and the planned rectangle. The second script added ground-truth path deviation and estimation error relative to simulator truth. Repeated runs within a single condition were aggregated with a third script, and multiple experiment groups were compared with a fourth script. This provides a complete framework for comparing nominal flights against multiple anomaly-condition experiment groups.
