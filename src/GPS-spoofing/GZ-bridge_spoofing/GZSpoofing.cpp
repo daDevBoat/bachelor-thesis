@@ -53,23 +53,17 @@ void GZSpoof::navSatCallback(const gz::msgs::NavSat &msg)
 	double latitude = msg.latitude_deg();
 	double longitude = msg.longitude_deg();
 	double altitude = msg.altitude();
-	float vel_north = msg.velocity_north();
-	float vel_east = msg.velocity_east();
-	float vel_down = -msg.velocity_up();
 
-	gz::msgs::NavSat spoofed_msg;
-    spoofed_msg.set_latitude_deg(latitude + 0.001); // Spoofed latitude
-    spoofed_msg.set_longitude_deg(longitude + 0.001); // Spoofed longitude
+	gz::msgs::NavSat spoofed_msg = msg; // Start with the original message and modify it
+    spoofed_msg.set_latitude_deg(latitude); // Spoofed latitude
+    spoofed_msg.set_longitude_deg(longitude); // Spoofed longitude
     spoofed_msg.set_altitude(altitude); // Spoofed altitude
-    spoofed_msg.set_velocity_north(vel_north); // Spoofed north velocity
-    spoofed_msg.set_velocity_east(vel_east); // Spoofed east velocity
-    spoofed_msg.set_velocity_up(vel_down); // Spoofed up velocity
 
     _pub.Publish(spoofed_msg);
 
     if (_msg_count % 25 == 0) {
-        cout << "Received NavSat: lat=" << latitude << ", lon=" << longitude << ", alt=" << altitude << endl;
-        cout << "Published spoofed NavSat: lat=" << spoofed_msg.latitude_deg() << ", lon=" << spoofed_msg.longitude_deg() << ", alt=" << spoofed_msg.altitude() << endl;
+        cout << "Received NavSat: lat = " << latitude << ", lon = " << longitude << ", alt = " << altitude << endl;
+        cout << "Published spoofed NavSat: lat = " << spoofed_msg.latitude_deg() << ", lon = " << spoofed_msg.longitude_deg() << ", alt = " << spoofed_msg.altitude() << endl;
     }
     
     _msg_count++;
