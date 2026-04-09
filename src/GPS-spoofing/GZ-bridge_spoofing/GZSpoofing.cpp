@@ -4,6 +4,20 @@
  * @date 2026-04
  */
 
+
+ /*
+ change this one line inside the subscribeNavsat() function to subscribe TO:
+ std::string nav_sat_topic = "/world/custom_gps/spoofed_navsat";
+ SHOULD BE line 309 in GZBridge.cpp
+
+ to run this script, use the following commands in the terminal:
+ 
+ make
+ ./GZSpoofing default x500_depth_0 constant 50
+
+ start this before gz with PX4
+ */
+
 #include <iostream>
 #include <vector>
 #include <string>
