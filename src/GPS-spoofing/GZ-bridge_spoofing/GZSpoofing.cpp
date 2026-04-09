@@ -23,6 +23,9 @@ GZSpoof::GZSpoof(const std::string &world, const std::string &model_name, const 
     _model_name = model_name;
     _attack_type = attack_type;
     attack_start_distance = start_distance_attack;
+
+    gz::transport::AdvertiseOptions pubOpts;
+
     _pub = _node.Advertise<gz::msgs::NavSat>("/world/custom_gps/spoofed_navsat");
 }
 
@@ -31,6 +34,20 @@ GZSpoof::~GZSpoof() {
 }
 
 void GZSpoof::initialize() {
+    //GZSpoof::subscribeClock();
+
+    // We must wait for clock before subscribing to other topics. This is because
+	// if we publish a 0 timestamp it screws up the EKF.
+    /*
+	while (1) {
+		std::this_thread::sleep_for(std::chrono::seconds(3));
+
+		if (_realtime_clock_set) {
+			std::this_thread::sleep_for(std::chrono::seconds(3));
+			break;
+		}
+	}
+    */
     GZSpoof::subscribeNavsat();
     _initialized = true;
 }
@@ -42,15 +59,45 @@ bool GZSpoof::subscribeNavsat()
 
     cout << "Subscribing to NavSat topic: " << nav_sat_topic << endl;
 
-	if (!_node.Subscribe(nav_sat_topic, &GZSpoof::navSatCallback, this)) {
+    gz::transport::SubscribeOptions opts;
+    //opts.SetMsgsPerSec(1);
+
+	if (!_node.Subscribe(nav_sat_topic, &GZSpoof::navSatCallback, this, opts)) {
 		cout << "Failed to subscribe to NavSat topic: " << nav_sat_topic << endl;
 		return false;
 	}
 	return true;
 }
 
+bool GZSpoof::subscribeClock()
+{
+	std::string clock_topic = "/world/" + _world_name + "/clock";
+
+	if (!_node.Subscribe(clock_topic, &GZSpoof::clockCallback, this)) {
+		cout << "Failed to subscribe to clock topic: " << clock_topic << endl;
+		return false;
+	}
+
+	return true;
+}
+
+void GZSpoof::clockCallback(const gz::msgs::Clock &msg)
+{
+	// NOTE: PX4-SITL time needs to stay in sync with gz, so this clock-sync will happen on every callback.
+
+	//_current_sim_time.mutable_stamp()->set_sec(msg.sim().sec());
+    //_current_sim_time.mutable_stamp()->set_nsec(msg.sim().nsec());
+}
+
 void GZSpoof::navSatCallback(const gz::msgs::NavSat &msg)
 {
+
+    //auto seconds = std::chrono::duration_cast<std::chrono::seconds>(_current_sim_time).count();
+    //auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(_current_sim_time - std::chrono::seconds(seconds)).count();
+
+    //spoofed_msg.mutable_header()->mutable_stamp()->set_sec(seconds);
+    //spoofed_msg.mutable_header()->mutable_stamp()->set_nsec(nanos);
+
 	double latitude = msg.latitude_deg();
 	double longitude = msg.longitude_deg();
 	double altitude = msg.altitude();
@@ -79,8 +126,10 @@ void GZSpoof::navSatCallback(const gz::msgs::NavSat &msg)
 
     if (_msg_count % 25 == 0) {
         cout << "Received NavSat: lat = " << latitude << ", lon = " << longitude << ", alt = " << altitude << endl;
+        cout << "Current attack bias: lat = " << bias[0] << ", lon = " << bias[1] << ", alt = " << bias[2] << endl;
         cout << "Published spoofed NavSat: lat = " << spoofed_msg.latitude_deg() << ", lon = " << spoofed_msg.longitude_deg() << ", alt = " << spoofed_msg.altitude() << endl;
         cout << "Total distance travelled: " << distance_travelled << " meters" << endl;
+        //cout << "Latency: " << (gz::msgs::Convert(msg.header().stamp()) - current_time) << endl;
     }
     
     _msg_count++;
@@ -147,7 +196,17 @@ int main(int argc, char* argv[]) {
     try {
         while (true) {
             //Keep the main thread alive to allow callbacks to be processed
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            //std::this_thread::sleep_for(std::chrono::seconds(1));
+            /*
+            if (std::cin.rdbuf()->in_avail() > 0) {
+                std::string input;
+                std::getline(std::cin, input);
+                if (input == "start") {
+                    spoofer.attack_start_distance = 0;
+                    cout << "Spoofing attack started immediately" << endl;
+                }
+            }
+            */
         }
         return 0;
     } catch (const std::exception& e) {

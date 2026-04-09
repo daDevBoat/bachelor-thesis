@@ -24,6 +24,9 @@ public:
     bool subscribeNavsat();
     void navSatCallback(const gz::msgs::NavSat &msg);
 
+    bool subscribeClock();
+    void clockCallback(const gz::msgs::Clock &msg);
+
 private:
     bool _initialized;
     bool _active = false;
@@ -36,6 +39,9 @@ private:
     double _prev_pos[3];
     bool _prev_pos_set = false;
     int _msg_count;
+    bool _realtime_clock_set = false;
+
+    gz::msgs::Header _current_sim_time;
 };
 
 #endif // GZSpoof_HPP
