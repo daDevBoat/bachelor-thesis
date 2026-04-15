@@ -165,12 +165,12 @@ double* GZSpoof::getAttackBias(double distance_travelled, const std::string &att
         bias[0] = 0.001;
         bias[1] = 0.001; 
     } else if (attack_type == "increasing") {
-        bias[0] = 0.00001 * distance_travelled; // Increases with distance
-        bias[1] = 0.00001 * distance_travelled; // Increases with distance
+        bias[0] = 0.000001 * (distance_travelled - attack_start_distance); // Increases with distance
+        bias[1] = 0.000001 * (distance_travelled - attack_start_distance); // Increases with distance
     } else if (attack_type == "random") {
         bias[0] = ((double)rand() / RAND_MAX - 0.5) * 0.0002; // Random between -10 and +10 meters
         bias[1] = ((double)rand() / RAND_MAX - 0.5) * 0.0002; // Random between -10 and +10 meters
-    }
+    } 
 
     return bias;
 }
