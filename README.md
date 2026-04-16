@@ -14,7 +14,6 @@ The software stack consists of:
 
 - **PX4**: autopilot
 - **Gazebo**: simulator
-- **ROS 2**: middleware for optional topic bridging and data collection
 - **QGroundControl**: mission planning and mission execution interface
 
 The main objective is to:
@@ -63,36 +62,34 @@ This shape is useful because it is:
 
 This setup is normally launched using multiple terminals.
 
-### Terminal 1: Start PX4 and Gazebo
-
-Run from inside `PX4-Autopilot/`:
-
-```bash
-cd ~/bachelor-thesis/PX4-Autopilot
-make px4_sitl gz_x500_depth
-```
-
-This launches:
-
-- PX4 SITL
-- Gazebo simulation
-- the `x500_depth` drone model
-
-### Terminal 2: Start ROS 2 environment
-
-Load ROS 2:
+### Terminal 1: Start the spoofing topic
+Inside GPS-spoofing/GZ-bridge_spoofing/build (make a build folder if none present) run:
 
 ```bash
-source /opt/ros/jazzy/setup.bash
+make
+./GZSpoofing baylands x500_depth_0 constant 50
 ```
 
-If needed, verify ROS 2 is available:
+### Terminal 2: Open QGroundControl
+
+Launch QGroundControl separately, for example:
 
 ```bash
-ros2 topic list
+cd ~/Downloads
+./QGroundControl.AppImage
 ```
 
-### Terminal 3: Start the Gazebo-to-ROS bridge
+### Terminal 3: Start PX4 and Gazebo
+```bash
+make px4_sitl gz_x500_depth_baylands
+```
+or 
+```bash
+make HEADLESS=1 px4_sitl gz_x500_depth_baylands
+```
+for running Gazebo headless.
+
+
 
 Run:
 
@@ -101,16 +98,7 @@ source /opt/ros/jazzy/setup.bash
 ros2 run ros_gz_bridge parameter_bridge /clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock
 ```
 
-This bridges Gazebo simulation time into ROS 2 as `/clock`.
-
-### Terminal 4: Open QGroundControl
-
-Launch QGroundControl separately, for example:
-
-```bash
-cd ~/Downloads
-./QGroundControl.AppImage
-```
+This br
 
 QGroundControl is used for:
 
@@ -120,14 +108,6 @@ QGroundControl is used for:
 - switching to Mission mode
 - downloading `.ulg` flight logs after the run
 
-### Optional Terminal 5: Record ROS 2 data
-
-To record ROS 2 topics during a run:
-
-```bash
-source /opt/ros/jazzy/setup.bash
-ros2 bag record /clock -o baseline_run_01
-```
 
 Stop the recording with `Ctrl+C` after the flight finishes.
 
