@@ -79,6 +79,12 @@ cd ~/Downloads
 ./QGroundControl.AppImage
 ```
 
+and set the following parameters:
+```bash
+EKF2_GPS_P_GATE=500
+EKF2_GPS_V_GATE=500
+```
+
 ### Terminal 3: Start PX4 and Gazebo
 ```bash
 make px4_sitl gz_x500_depth_baylands
