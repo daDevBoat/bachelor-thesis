@@ -3,10 +3,10 @@ from pandas import DataFrame
 
 
 COLUMNS = ["of_distance", "gps_distance", "gyro_magnitude", "prev_gyro_magnitude"]
-TEST_PRINTING = True
-MANUAL_STEPS = True
+TEST_PRINTING = False
+MANUAL_STEPS = False
 NORMALIZE = True
-SPOOF_START_DISTANCE = 25
+SPOOF_START_DISTANCE = 100
 
 def read_data(filename: str) -> DataFrame:
     csv_df = pd.read_csv(filename, names=COLUMNS)
@@ -181,7 +181,7 @@ def main(filename_control: str, filename_spoofed: str):
         print("\n\nSPOOFED RUNS ANALYSIS:")
         print("-------------------------------------------\n\n")
 
-    test_cusum(data_spoofed, dist_mean, dist_diviation, k1, 11 * 1.1, gyro_mean, gyro_deviation, k2)
+    test_cusum(data_spoofed, dist_mean, dist_diviation, k1, 21.7 * 1.1, gyro_mean, gyro_deviation, k2)
 
     print(f"Distance: \nMean: {dist_mean}    Standard diviation: {dist_diviation}")
     print(f"Max s_pos: {max_dist_s_pos}, max s_neg: {max_dist_s_neg}\n")
@@ -193,7 +193,7 @@ def main(filename_control: str, filename_spoofed: str):
     #inspect_z_values(data, dist_mean, dist_diviation)
 
 
-main("flight_logs/turn_control_log.csv", "flight_logs/turn_spoofing100_log.csv")
+main("/Users/isabellalopiano/thesis/PX4-Autopilot/turn_control_log.csv", "/Users/isabellalopiano/thesis/PX4-Autopilot/turn_spoofing100_log.csv")
 #main("flight_logs/straight_control_log.csv", "flight_logs/straight_spoofing25_log.csv")
 
 
