@@ -4,7 +4,14 @@ import pandas as pd
 from pandas import DataFrame
 
 
-COLUMNS = ["of_distance", "gps_distance", "gyro_magnitude", "prev_gyro_magnitude"]
+COLUMNS = [
+    "of_distance",
+    "gps_distance",
+    "gyro_magnitude",
+    "prev_gyro_magnitude",
+    "time_us",
+]
+
 TEST_PRINTING = True
 MANUAL_STEPS = False
 NORMALIZE = True
@@ -17,8 +24,8 @@ def csv_sort_key(path: Path):
     Sort 1.csv, 2.csv, 10.csv numerically instead of alphabetically.
     """
     if path.stem.isdigit():
-        return int(path.stem)
-    return path.stem
+        return 0, int(path.stem)
+    return 1, path.stem
 
 
 def read_runs(directory: str) -> list[DataFrame]:
@@ -33,6 +40,7 @@ def read_runs(directory: str) -> list[DataFrame]:
         raise FileNotFoundError(f"No CSV files found in {directory_path}")
 
     runs = []
+
     for csv_file in csv_files:
         csv_df = pd.read_csv(csv_file, names=COLUMNS)
 
@@ -73,13 +81,17 @@ def compute_diviation(
     for df in runs:
         for row in df.itertuples(index=False):
             sum_dist_diff += ((row.of_distance - row.gps_distance) - dist_mean) ** 2
-            sum_gyro_diff += ((row.gyro_magnitude - row.prev_gyro_magnitude) - gyro_mean) ** 2
+            sum_gyro_diff += (
+                (row.gyro_magnitude - row.prev_gyro_magnitude) - gyro_mean
+            ) ** 2
             used_rows += 1
 
     if used_rows == 0:
         raise ValueError("No usable rows found while computing deviations.")
 
-    return (sum_dist_diff / used_rows) ** (1 / 2), (sum_gyro_diff / used_rows) ** (1 / 2)
+    return (sum_dist_diff / used_rows) ** (1 / 2), (
+        sum_gyro_diff / used_rows
+    ) ** (1 / 2)
 
 
 def cusum(
@@ -145,9 +157,18 @@ def test_cusum(
         total_of_distance = 0.0
 
         spoofed = False
-        updates_to_detection = 0
+
+        spoof_start_time_us = None
+        detection_time_us = None
+        detection_gps_distance = None
+        detection_of_distance = None
+
+        last_time_us = None
 
         for row in df.itertuples(index=False):
+            previous_total_gps_distance = total_gps_distance
+            previous_time_us = last_time_us
+
             dist_diff = row.of_distance - row.gps_distance
             dist_s_pos, dist_s_neg = cusum(
                 dist_diff,
@@ -161,6 +182,26 @@ def test_cusum(
             total_gps_distance += row.gps_distance
             total_of_distance += row.of_distance
 
+            # Estimate the timestamp where GPS distance crosses the spoof start distance.
+            if (
+                spoof_start_time_us is None
+                and previous_total_gps_distance <= SPOOF_START_DISTANCE < total_gps_distance
+            ):
+                if (
+                    previous_time_us is not None
+                    and total_gps_distance != previous_total_gps_distance
+                ):
+                    fraction = (
+                        (SPOOF_START_DISTANCE - previous_total_gps_distance)
+                        / (total_gps_distance - previous_total_gps_distance)
+                    )
+
+                    spoof_start_time_us = previous_time_us + fraction * (
+                        row.time_us - previous_time_us
+                    )
+                else:
+                    spoof_start_time_us = row.time_us
+
             gyro_diff = row.gyro_magnitude - row.prev_gyro_magnitude
             gyro_s = cusum_abs(
                 gyro_diff,
@@ -171,11 +212,11 @@ def test_cusum(
             )
 
             if threshold > 0:
-                if dist_s_pos > threshold or dist_s_neg > threshold:
+                if not spoofed and (dist_s_pos > threshold or dist_s_neg > threshold):
                     spoofed = True
-
-            if total_gps_distance > SPOOF_START_DISTANCE and spoofed is False:
-                updates_to_detection += 1
+                    detection_time_us = row.time_us
+                    detection_gps_distance = total_gps_distance
+                    detection_of_distance = total_of_distance
 
             if dist_s_pos > run_max_dist_s_pos:
                 run_max_dist_s_pos = dist_s_pos
@@ -186,9 +227,19 @@ def test_cusum(
             if gyro_s > run_max_gyro_s:
                 run_max_gyro_s = gyro_s
 
+            last_time_us = row.time_us
+
             if TEST_PRINTING and MANUAL_STEPS:
-                print(f"Gps distance: {total_gps_distance}, OF distance: {total_of_distance}")
-                print(f"dist_s_pos: {dist_s_pos}, dist_s_neg: {dist_s_neg}, gyro_s: {gyro_s}")
+                print(
+                    f"Gps distance: {total_gps_distance}, "
+                    f"OF distance: {total_of_distance}"
+                )
+                print(f"Time: {row.time_us} us")
+                print(
+                    f"dist_s_pos: {dist_s_pos}, "
+                    f"dist_s_neg: {dist_s_neg}, "
+                    f"gyro_s: {gyro_s}"
+                )
                 input("")
 
         if run_max_dist_s_pos > max_dist_s_pos:
@@ -215,10 +266,35 @@ def test_cusum(
             )
 
             if spoofed:
-                print(
-                    f"Spoofing detected during this run, "
-                    f"{updates_to_detection} updates after spoofing started.\n"
-                )
+                print("Spoofing detected during this run.")
+
+                if detection_gps_distance is not None:
+                    print(f"Detection GPS distance: {detection_gps_distance:.2f} m")
+
+                if detection_of_distance is not None:
+                    print(f"Detection OF distance: {detection_of_distance:.2f} m")
+
+                if (
+                    spoof_start_time_us is not None
+                    and detection_time_us is not None
+                ):
+                    detection_delay_seconds = (
+                        detection_time_us - spoof_start_time_us
+                    ) / 1_000_000
+
+                    print(
+                        f"Detection time after spoof start: "
+                        f"{detection_delay_seconds:.3f} s"
+                    )
+
+                    print(
+                        f"Detection distance after spoof start: "
+                        f"{detection_gps_distance - SPOOF_START_DISTANCE:.2f} m"
+                    )
+                else:
+                    print("Detection happened before spoof start distance was reached.")
+
+                print()
 
     return max_dist_s_pos, max_dist_s_neg, max_gyro_s
 
@@ -278,6 +354,6 @@ def main(directory_control: str, directory_spoofed: str):
 
 
 main(
-    "flight_logs_new/turn_control",
-    "flight_logs_new/turn_spoofing100",
+    "flight_logs/turns_control",
+    "flight_logs/turns_spoofing100",
 )
