@@ -1,468 +1,549 @@
 #!/usr/bin/env python3
-
-import sys
+ 
 import pandas as pd
 from pandas import DataFrame
-
-# =====================================================
-# SETTINGS
-# =====================================================
-
+from statistics import median
+ 
+ 
 COLUMNS = ["of_distance", "gps_distance", "gyro_magnitude", "prev_gyro_magnitude"]
-
-# Print run summaries and immediate detections.
-TEST_PRINTING = True
-
-# If True, pauses after every sample. Usually keep this False.
+TEST_PRINTING = False
 MANUAL_STEPS = False
-
-# Normalize CUSUM inputs using mean and standard deviation from control data.
 NORMALIZE = True
-
-# Spoofing starts when cumulative GPS distance passes this value.
-SPOOF_START_DISTANCE = 25.0
-
-# SSDGOF threshold, matching your C++ _sensitivity_threshold.
+SPOOF_START_DISTANCE = 100
 SSDGOF_THRESHOLD = 10.0
 
-# CUSUM threshold used on spoofed flights.
-CUSUM_THRESHOLD = 11.0 * 1.1
 
-# CUSUM k values.
-# If NORMALIZE is True, these are in standard-deviation units.
-DIST_K_NORMALIZED = 0.5
-GYRO_K_NORMALIZED = 0.8
+## EXCLUDED_CONTROL_RUNS = {3}
 
-# If NORMALIZE is False, these are in raw units.
-DIST_K_RAW = 0.0132
-GYRO_K_RAW = DIST_K_RAW
-
-# Your current default files. These can also be overridden from the command line.
-DEFAULT_CONTROL_FILE = "/Users/isabellalopiano/Downloads/straight_control_log_cleaned.csv"
-DEFAULT_SPOOFED_FILE = "/Users/isabellalopiano/thesis/PX4-Autopilot/straight_spoofing25_log.csv"
-
-# Your marker row is all zeros. The original script skipped the marker row and the
-# row immediately after it. Keeping this True preserves that behavior.
-SKIP_FIRST_SAMPLE_AFTER_MARKER = True
-
-
-# =====================================================
-# DATA LOADING AND RUN SPLITTING
-# =====================================================
-
+## EXCLUDED_CONTROL_RUNS = {2, 10, 14, 17, 18, 19, 23, 29, 31, 33, 35, 37, 47, 51}
+    
+EXCLUDED_CONTROL_RUNS = {} ## bad runs from straight control
+EXCLUDED_SPOOFED_RUNS = {}  ## bad runs from turn spoofing
+ 
+ 
 def read_data(filename: str) -> DataFrame:
     csv_df = pd.read_csv(filename, names=COLUMNS)
-
-    for col in COLUMNS:
-        csv_df[col] = pd.to_numeric(csv_df[col], errors="coerce")
-
-    csv_df = csv_df.dropna().reset_index(drop=True)
     return csv_df
-
-
-def is_marker_row(row) -> bool:
-    return (
-        row["of_distance"] == 0
-        and row["gps_distance"] == 0
-        and row["gyro_magnitude"] == 0
-        and row["prev_gyro_magnitude"] == 0
-    )
-
-
-def split_into_runs(df: DataFrame) -> list[DataFrame]:
-    runs = []
-    current_rows = []
-    skip_next = False
-
-    for _, row in df.iterrows():
-        if is_marker_row(row):
-            if current_rows:
-                runs.append(pd.DataFrame(current_rows).reset_index(drop=True))
-                current_rows = []
-
-            skip_next = SKIP_FIRST_SAMPLE_AFTER_MARKER
+ 
+def remove_runs(df: DataFrame, excluded_runs: set[int]) -> DataFrame:
+    if not excluded_runs:
+        return df
+ 
+    rows_to_keep = []
+    current_run = 0
+    inside_excluded_run = False
+ 
+    i = 0
+ 
+    while i < len(df):
+        is_marker = (
+            df.loc[i]["of_distance"] == 0 and
+            df.loc[i]["gps_distance"] == 0 and
+            df.loc[i]["gyro_magnitude"] == 0 and
+            df.loc[i]["prev_gyro_magnitude"] == 0
+        )
+ 
+        if is_marker:
+            current_run += 1
+            inside_excluded_run = current_run in excluded_runs
+ 
+            if not inside_excluded_run:
+                rows_to_keep.append(df.loc[i])
+ 
+            i += 1
             continue
-
-        if skip_next:
-            skip_next = False
-            continue
-
-        current_rows.append(row)
-
-    if current_rows:
-        runs.append(pd.DataFrame(current_rows).reset_index(drop=True))
-
-    return runs
-
-
-# =====================================================
-# CONTROL STATISTICS
-# =====================================================
-
+ 
+        if not inside_excluded_run:
+            rows_to_keep.append(df.loc[i])
+ 
+        i += 1
+ 
+    return pd.DataFrame(rows_to_keep).reset_index(drop=True)
+ 
 def compute_means(df: DataFrame) -> tuple[float, float]:
-    runs = split_into_runs(df)
-
-    dist_diffs = []
-    gyro_diffs = []
-
-    for run in runs:
-        dist_diffs.extend((run["of_distance"] - run["gps_distance"]).tolist())
-        gyro_diffs.extend((run["gyro_magnitude"] - run["prev_gyro_magnitude"]).tolist())
-
-    if len(dist_diffs) == 0 or len(gyro_diffs) == 0:
-        raise ValueError("No usable rows found while computing means.")
-
-    return float(pd.Series(dist_diffs).mean()), float(pd.Series(gyro_diffs).mean())
-
-
-def compute_deviation(df: DataFrame, dist_mean: float, gyro_mean: float) -> tuple[float, float]:
-    runs = split_into_runs(df)
-
-    dist_squared = []
-    gyro_squared = []
-
-    for run in runs:
-        dist_diff = run["of_distance"] - run["gps_distance"]
-        gyro_diff = run["gyro_magnitude"] - run["prev_gyro_magnitude"]
-
-        dist_squared.extend(((dist_diff - dist_mean) ** 2).tolist())
-        gyro_squared.extend(((gyro_diff - gyro_mean) ** 2).tolist())
-
-    if len(dist_squared) == 0 or len(gyro_squared) == 0:
-        raise ValueError("No usable rows found while computing standard deviation.")
-
-    # This matches the original script: sqrt(sum / N), not sample std with N - 1.
-    dist_sd = float((sum(dist_squared) / len(dist_squared)) ** 0.5)
-    gyro_sd = float((sum(gyro_squared) / len(gyro_squared)) ** 0.5)
-
-    if dist_sd == 0 or gyro_sd == 0:
-        raise ValueError("Standard deviation is zero. CUSUM normalization would divide by zero.")
-
-    return dist_sd, gyro_sd
-
-
-# =====================================================
-# CUSUM HELPERS
-# =====================================================
-
+    sum_dist_diff = 0
+    sum_gyro_diff = 0
+    used_rows = 0
+    i = 0
+ 
+    while i < len(df):
+        if df.loc[i]["of_distance"] == 0 and df.loc[i]["gps_distance"] == 0 and df.loc[i]["gyro_magnitude"] == 0 and df.loc[i]["prev_gyro_magnitude"] == 0:
+            i += 1
+            continue
+ 
+        sum_dist_diff += df.loc[i]["of_distance"] - df.loc[i]["gps_distance"]
+        sum_gyro_diff += df.loc[i]["gyro_magnitude"] - df.loc[i]["prev_gyro_magnitude"]
+        used_rows += 1
+        i += 1
+ 
+    return sum_dist_diff / used_rows, sum_gyro_diff / used_rows
+ 
+ 
+def compute_diviation(df: DataFrame, dist_mean, gyro_mean) -> tuple[float, float]:
+    sum_dist_diff = 0
+    sum_gyro_diff = 0
+    used_rows = 0
+    i = 0
+ 
+    while i < len(df):
+        if df.loc[i]["of_distance"] == 0 and df.loc[i]["gps_distance"] == 0 and df.loc[i]["gyro_magnitude"] == 0 and df.loc[i]["prev_gyro_magnitude"] == 0:
+            i += 1
+            continue
+ 
+        sum_dist_diff += ((df.loc[i]["of_distance"] - df.loc[i]["gps_distance"]) - dist_mean) ** 2
+        sum_gyro_diff += ((df.loc[i]["gyro_magnitude"] - df.loc[i]["prev_gyro_magnitude"]) - gyro_mean) ** 2
+        used_rows += 1
+        i += 1
+ 
+    return (sum_dist_diff / used_rows) ** (1 / 2), (sum_gyro_diff / used_rows) ** (1 / 2)
+ 
+ 
 def cusum(diff: float, mean: float, sd: float, s_pos: float, s_neg: float, k: float) -> tuple[float, float]:
     if NORMALIZE:
-        z = (diff - mean) / sd
+        Z = (diff - mean) / sd
     else:
-        z = diff
-
-    s_pos = max(0.0, s_pos + z - k)
-    s_neg = max(0.0, s_neg - z - k)
+        Z = diff
+ 
+    s_pos = max(0.0, s_pos + Z - k)
+    s_neg = max(0.0, s_neg - Z - k)
+ 
     return s_pos, s_neg
-
-
+ 
+ 
 def cusum_abs(diff: float, mean: float, sd: float, s: float, k: float) -> float:
     if NORMALIZE:
-        z = abs(diff - mean) / sd
+        Z = abs(diff - mean) / sd
     else:
-        z = abs(diff)
-
-    s = max(0.0, s + z - k)
+        Z = abs(diff)
+ 
+    s = max(0.0, s + Z - k)
     return s
+ 
+ 
+def make_stats_dict(name: str) -> dict:
+    return {
+        "name": name,
+        "runs": 0,
+        "detected_runs": 0,
+        "true_positive_runs": 0,
+        "false_positive_runs": 0,
+        "missed_runs": 0,
+        "detection_gps_distances": [],
+        "detection_distances_after_spoof": [],
+        "false_positive_gps_distances": [],
+        "run_results": [],   
+    }
+ 
+ 
+def update_detection_stats(stats: dict, is_spoofed_data: bool, detected: bool, detection_gps_distance: float | None) -> None:
+    stats["runs"] += 1
+ 
+    if detected:
+        stats["detected_runs"] += 1
+        stats["detection_gps_distances"].append(detection_gps_distance)
+ 
+        if is_spoofed_data:
+            if detection_gps_distance < SPOOF_START_DISTANCE:
+                stats["false_positive_runs"] += 1
+                stats["false_positive_gps_distances"].append(detection_gps_distance)
+            else:
+                stats["true_positive_runs"] += 1
+                stats["detection_distances_after_spoof"].append(detection_gps_distance - SPOOF_START_DISTANCE)
+        else:
+            stats["false_positive_runs"] += 1
+            stats["false_positive_gps_distances"].append(detection_gps_distance)
+    else:
+        if is_spoofed_data:
+            stats["missed_runs"] += 1
+ 
+ 
+def average(values: list[float]) -> float | None:
+    if len(values) == 0:
+        return None
+ 
+    return sum(values) / len(values)
+ 
+ 
+def print_detection_stats(stats: dict) -> None:
+    avg_detection_gps_distance = average(stats["detection_gps_distances"])
+    avg_detection_after_spoof = average(stats["detection_distances_after_spoof"])
+    avg_false_positive_distance = average(stats["false_positive_gps_distances"])
+
+    print(f"\n{stats['name']} SUMMARY")
+    print("--------------------------------------")
+    print(f"Runs: {stats['runs']}")
+    print(f"Detected runs: {stats['detected_runs']} / {stats['runs']}")
+    print(f"True positives: {stats['true_positive_runs']}")
+    print(f"False positives: {stats['false_positive_runs']}")
+    print(f"Missed detections: {stats['missed_runs']}")
+
+    if stats["detection_gps_distances"]:
+        print(f"Average GPS distance at detection: {avg_detection_gps_distance:.2f} m")
+        print(f"Minimum GPS distance at detection: {min(stats['detection_gps_distances']):.2f} m")
+        print(f"Maximum GPS distance at detection: {max(stats['detection_gps_distances']):.2f} m")
+        print(f"Median GPS distance at detection: {median(stats['detection_gps_distances']):.2f} m")
 
 
-# =====================================================
-# CUSUM TEST
-# =====================================================
+    if stats["detection_distances_after_spoof"]:
+        print(f"Average distance after spoof start: {avg_detection_after_spoof:.2f} m")
+        print(f"Minimum distance after spoof start: {min(stats['detection_distances_after_spoof']):.2f} m")
+        print(f"Maximum distance after spoof start: {max(stats['detection_distances_after_spoof']):.2f} m")
+        print(f"Median distance after spoof start: {median(stats['detection_distances_after_spoof']):.2f} m")
 
-def test_cusum(
-    df: DataFrame,
-    mean1: float,
-    sd1: float,
-    k1: float,
-    threshold: float,
-    mean2: float,
-    sd2: float,
-    k2: float,
-    label: str = "",
-) -> tuple[float, float, float]:
-    runs = split_into_runs(df)
 
+    if stats["false_positive_gps_distances"]:
+        print(f"Average false-positive GPS distance: {avg_false_positive_distance:.2f} m")
+        print(f"Minimum false-positive GPS distance: {min(stats['false_positive_gps_distances']):.2f} m")
+        print(f"Maximum false-positive GPS distance: {max(stats['false_positive_gps_distances']):.2f} m")
+        print(f"Median false-positive GPS distance: {median(stats['false_positive_gps_distances']):.2f} m")
+
+
+    print()
+ 
+ 
+def test_cusum(df: DataFrame, mean1: float, sd1: float, k1: float, threshold: float, mean2: float, sd2: float, k2: float, label: str = "", is_spoofed_data: bool = False) -> tuple[float, float, float, dict]:
     max_dist_s_pos = 0.0
     max_dist_s_neg = 0.0
     max_gyro_s = 0.0
-
-    if TEST_PRINTING:
-        print(f"\n\nCUSUM ANALYSIS: {label}")
-        print("-------------------------------------------")
-        print(f"Runs found: {len(runs)}")
-        print(f"Threshold: {threshold}\n")
-
-    for run_index, run_df in enumerate(runs, start=1):
-        dist_s_pos = 0.0
-        dist_s_neg = 0.0
-        gyro_s = 0.0
-
-        run_max_dist_s_pos = 0.0
-        run_max_dist_s_neg = 0.0
-        run_max_gyro_s = 0.0
-
-        total_gps_distance = 0.0
-        total_of_distance = 0.0
-
-        cusum_detected = False
-        detection_gps_distance = None
-        detection_of_distance = None
-        detection_delay_distance = None
-        detection_delay_seconds = None
-        updates_after_spoof_start = 0
-
-        for row_index, row in run_df.iterrows():
-            dist_diff = row["of_distance"] - row["gps_distance"]
-            dist_s_pos, dist_s_neg = cusum(dist_diff, mean1, sd1, dist_s_pos, dist_s_neg, k1)
-
-            total_gps_distance += row["gps_distance"]
-            total_of_distance += row["of_distance"]
-
-            gyro_diff = row["gyro_magnitude"] - row["prev_gyro_magnitude"]
-            gyro_s = cusum_abs(gyro_diff, mean2, sd2, gyro_s, k2)
-
-            run_max_dist_s_pos = max(run_max_dist_s_pos, dist_s_pos)
-            run_max_dist_s_neg = max(run_max_dist_s_neg, dist_s_neg)
-            run_max_gyro_s = max(run_max_gyro_s, gyro_s)
-
-            if total_gps_distance > SPOOF_START_DISTANCE and not cusum_detected:
-                updates_after_spoof_start += 1
-
-            if threshold > 0 and not cusum_detected and (dist_s_pos > threshold or dist_s_neg > threshold):
-                cusum_detected = True
+ 
+    run_max_dist_s_pos = 0.0
+    run_max_dist_s_neg = 0.0
+    run_max_gyro_s = 0.0
+ 
+    dist_s_pos = 0.0
+    dist_s_neg = 0.0
+    gyro_s = 0.0
+ 
+    total_gps_distance = 0.0
+    total_of_distance = 0.0
+ 
+    spoofed = False
+    updates_to_detection = 0
+    detection_gps_distance = None
+    detection_of_distance = None
+ 
+    stats = make_stats_dict(f"CUSUM {label}")
+ 
+    used_rows = 0
+    run = 1
+    i = 0
+ 
+    def finish_run() -> None:
+        nonlocal max_dist_s_pos, max_dist_s_neg, max_gyro_s
+ 
+        if run_max_dist_s_pos > max_dist_s_pos:
+            max_dist_s_pos = run_max_dist_s_pos
+ 
+        if run_max_dist_s_neg > max_dist_s_neg:
+            max_dist_s_neg = run_max_dist_s_neg
+ 
+        if run_max_gyro_s > max_gyro_s:
+            max_gyro_s = run_max_gyro_s
+ 
+        update_detection_stats(stats, is_spoofed_data, spoofed, detection_gps_distance)
+ 
+        if TEST_PRINTING:
+            print(f"Results run: {run}")
+            print("--------------------------------------")
+            print(f"Dist run max s_pos: {run_max_dist_s_pos}, current max s_neg: {run_max_dist_s_neg}, Gyro current max s: {run_max_gyro_s}\n")
+            print(f"Dist current max s_pos: {max_dist_s_pos}, current max s_neg: {max_dist_s_neg}, Gyro current max s: {max_gyro_s}\n")
+ 
+            if spoofed:
+                print(f"CUSUM spoofing detected during this run, {updates_to_detection * 0.2:.1f}s after spoofing started.")
+                print(f"Detection GPS distance: {detection_gps_distance:.2f} m")
+                print(f"Detection OF distance: {detection_of_distance:.2f} m")
+ 
+                if is_spoofed_data:
+                    if detection_gps_distance < SPOOF_START_DISTANCE:
+                        print("This detection is a false positive before spoofing started.\n")
+                    else:
+                        print(f"Distance after spoof start: {detection_gps_distance - SPOOF_START_DISTANCE:.2f} m\n")
+                else:
+                    print("This detection is a false positive in control data.\n")
+            else:
+                print("CUSUM did not detect during this run.\n")
+ 
+    while i < len(df):
+        if df.loc[i]["of_distance"] == 0 and df.loc[i]["gps_distance"] == 0 and df.loc[i]["gyro_magnitude"] == 0 and df.loc[i]["prev_gyro_magnitude"] == 0:
+            if run > 1:
+                finish_run()
+ 
+            dist_s_pos = 0.0
+            dist_s_neg = 0.0
+            gyro_s = 0.0
+            total_gps_distance = 0.0
+            total_of_distance = 0.0
+ 
+            run_max_dist_s_pos = 0.0
+            run_max_dist_s_neg = 0.0
+            run_max_gyro_s = 0.0
+            spoofed = False
+            updates_to_detection = 0
+            detection_gps_distance = None
+            detection_of_distance = None
+ 
+            run += 1
+            i += 1
+            continue
+ 
+        if total_gps_distance >= 24 and False:
+            i += 1
+            continue
+ 
+        dist_diff = df.loc[i]["of_distance"] - df.loc[i]["gps_distance"]
+        dist_s_pos, dist_s_neg = cusum(dist_diff, mean1, sd1, dist_s_pos, dist_s_neg, k1)
+ 
+        total_gps_distance += df.loc[i]["gps_distance"]
+        total_of_distance += df.loc[i]["of_distance"]
+ 
+        gyro_diff = df.loc[i]["gyro_magnitude"] - df.loc[i]["prev_gyro_magnitude"]
+        gyro_s = cusum_abs(gyro_diff, mean2, sd2, gyro_s, k2)
+ 
+        if threshold > 0:
+            if not spoofed and (dist_s_pos > threshold or dist_s_neg > threshold):
+                spoofed = True
                 detection_gps_distance = total_gps_distance
                 detection_of_distance = total_of_distance
-                detection_delay_distance = total_gps_distance - SPOOF_START_DISTANCE
-                detection_delay_seconds = updates_after_spoof_start * 0.2
-
+ 
                 if TEST_PRINTING:
-                    print(
-                        f"CUSUM DETECTED in run {run_index}: "
-                        f"GPS distance={detection_gps_distance:.2f} m, "
-                        f"OF distance={detection_of_distance:.2f} m, "
-                        f"delay={detection_delay_distance:.2f} m, "
-                        f"s_pos={dist_s_pos:.3f}, s_neg={dist_s_neg:.3f}"
-                    )
-
-            if TEST_PRINTING and MANUAL_STEPS:
-                print(f"Gps distance: {total_gps_distance}, OF distance: {total_of_distance}")
-                print(f"dist_s_pos: {dist_s_pos}, dist_s_neg: {dist_s_neg}, gyro_s: {gyro_s}")
-                input("")
-
-        max_dist_s_pos = max(max_dist_s_pos, run_max_dist_s_pos)
-        max_dist_s_neg = max(max_dist_s_neg, run_max_dist_s_neg)
-        max_gyro_s = max(max_gyro_s, run_max_gyro_s)
-
-        if TEST_PRINTING:
-            print(f"\nCUSUM results run: {run_index}")
-            print("--------------------------------------")
-            print(f"Dist run max s_pos: {run_max_dist_s_pos}")
-            print(f"Dist run max s_neg: {run_max_dist_s_neg}")
-            print(f"Gyro run max s: {run_max_gyro_s}")
-
-            if threshold > 0:
-                if cusum_detected:
-                    print(
-                        f"CUSUM spoofing detected during this run, "
-                        f"{detection_delay_seconds:.1f}s after spoofing started."
-                    )
-                    print(
-                        f"Detection GPS distance: {detection_gps_distance:.2f} m, "
-                        f"OF distance: {detection_of_distance:.2f} m, "
-                        f"distance after spoof start: {detection_delay_distance:.2f} m\n"
-                    )
-                else:
-                    print("CUSUM did not detect during this run.\n")
-
-    if TEST_PRINTING:
-        print("\nCUSUM overall max values")
-        print("--------------------------------------")
-        print(f"Max s_pos: {max_dist_s_pos}")
-        print(f"Max s_neg: {max_dist_s_neg}")
-        print(f"Max gyro_s: {max_gyro_s}\n")
-
-    return max_dist_s_pos, max_dist_s_neg, max_gyro_s
-
-
-# =====================================================
-# SSDGOF TEST
-# =====================================================
-
-def test_ssdgof(df: DataFrame, threshold: float, label: str = "") -> float:
-    runs = split_into_runs(df)
-
+                    print(f"CUSUM DETECTED in run {run}")
+                    print(f"GPS distance: {detection_gps_distance:.2f} m")
+                    print(f"OF distance: {detection_of_distance:.2f} m")
+                    print(f"s_pos: {dist_s_pos:.3f}, s_neg: {dist_s_neg:.3f}\n")
+ 
+        if total_gps_distance > SPOOF_START_DISTANCE and spoofed is False:
+            updates_to_detection += 1
+ 
+        if dist_s_pos > run_max_dist_s_pos:
+            run_max_dist_s_pos = dist_s_pos
+ 
+        if dist_s_neg > run_max_dist_s_neg:
+            run_max_dist_s_neg = dist_s_neg
+ 
+        if gyro_s > run_max_gyro_s:
+            run_max_gyro_s = gyro_s
+ 
+        used_rows += 1
+        i += 1
+ 
+        if TEST_PRINTING and MANUAL_STEPS:
+            print(f"Gps distance: {total_gps_distance}, OF distance: {total_of_distance}")
+            print(f"dist_s_pos: {dist_s_pos}, dist_s_neg: {dist_s_neg}, gyro_s: {gyro_s}")
+            input("")
+ 
+    # Finish the last run if the file does not end with a marker row.
+    if used_rows > 0:
+        finish_run()
+ 
+    return max_dist_s_pos, max_dist_s_neg, max_gyro_s, stats
+ 
+ 
+def test_ssdgof(df: DataFrame, threshold: float, label: str = "", is_spoofed_data: bool = False) -> tuple[float, dict]:
     max_ssdgof_error = 0.0
-
-    if TEST_PRINTING:
-        print(f"\n\nSSDGOF ANALYSIS: {label}")
-        print("-------------------------------------------")
-        print(f"Runs found: {len(runs)}")
-        print(f"Threshold: {threshold}\n")
-
-    for run_index, run_df in enumerate(runs, start=1):
-        total_gps_distance = 0.0
-        total_of_distance = 0.0
-
-        run_max_ssdgof_error = 0.0
-
-        ssdgof_detected = False
-        detection_gps_distance = None
-        detection_of_distance = None
-        detection_error = None
-        detection_delay_distance = None
-        detection_delay_seconds = None
-        updates_after_spoof_start = 0
-
-        for row_index, row in run_df.iterrows():
-            total_gps_distance += row["gps_distance"]
-            total_of_distance += row["of_distance"]
-
-            ssdgof_error = abs(total_gps_distance - total_of_distance)
-            run_max_ssdgof_error = max(run_max_ssdgof_error, ssdgof_error)
-
-            if total_gps_distance > SPOOF_START_DISTANCE and not ssdgof_detected:
-                updates_after_spoof_start += 1
-
+    run_max_ssdgof_error = 0.0
+ 
+    total_gps_distance = 0.0
+    total_of_distance = 0.0
+ 
+    ssdgof_detected = False
+    updates_to_detection = 0
+    detection_gps_distance = None
+    detection_of_distance = None
+    detection_error = None
+ 
+    stats = make_stats_dict(f"SSDGOF {label}")
+ 
+    run = 1
+    used_rows = 0
+    i = 0
+ 
+    def finish_run() -> None:
+        nonlocal max_ssdgof_error
+ 
+        if run_max_ssdgof_error > max_ssdgof_error:
+            max_ssdgof_error = run_max_ssdgof_error
+ 
+        update_detection_stats(stats, is_spoofed_data, ssdgof_detected, detection_gps_distance)
+ 
+        if TEST_PRINTING:
+            print(f"SSDGOF results run: {run}")
+            print("--------------------------------------")
+            print(f"SSDGOF run max error: {run_max_ssdgof_error}")
+            print(f"SSDGOF current max error: {max_ssdgof_error}\n")
+ 
+            if ssdgof_detected:
+                print(f"SSDGOF spoofing detected during this run, {updates_to_detection * 0.2:.1f}s after spoofing started.")
+                print(f"Detection GPS distance: {detection_gps_distance:.2f} m")
+                print(f"Detection OF distance: {detection_of_distance:.2f} m")
+                print(f"SSDGOF error: {detection_error:.2f} m")
+ 
+                if is_spoofed_data:
+                    if detection_gps_distance < SPOOF_START_DISTANCE:
+                        print("This detection is a false positive before spoofing started.\n")
+                    else:
+                        print(f"Distance after spoof start: {detection_gps_distance - SPOOF_START_DISTANCE:.2f} m\n")
+                else:
+                    print("This detection is a false positive in control data.\n")
+            else:
+                print("SSDGOF did not detect during this run.\n")
+ 
+    while i < len(df):
+        if df.loc[i]["of_distance"] == 0 and df.loc[i]["gps_distance"] == 0 and df.loc[i]["gyro_magnitude"] == 0 and df.loc[i]["prev_gyro_magnitude"] == 0:
+            if run > 1:
+                finish_run()
+ 
+            total_gps_distance = 0.0
+            total_of_distance = 0.0
+ 
+            run_max_ssdgof_error = 0.0
+            ssdgof_detected = False
+            updates_to_detection = 0
+            detection_gps_distance = None
+            detection_of_distance = None
+            detection_error = None
+ 
+            run += 1
+            i += 1
+            continue
+ 
+        total_gps_distance += df.loc[i]["gps_distance"]
+        total_of_distance += df.loc[i]["of_distance"]
+ 
+        ssdgof_error = abs(total_gps_distance - total_of_distance)
+ 
+        if ssdgof_error > run_max_ssdgof_error:
+            run_max_ssdgof_error = ssdgof_error
+ 
+        if threshold > 0:
             if not ssdgof_detected and ssdgof_error > threshold:
                 ssdgof_detected = True
                 detection_gps_distance = total_gps_distance
                 detection_of_distance = total_of_distance
                 detection_error = ssdgof_error
-                detection_delay_distance = total_gps_distance - SPOOF_START_DISTANCE
-                detection_delay_seconds = updates_after_spoof_start * 0.2
-
+ 
                 if TEST_PRINTING:
-                    print(
-                        f"SSDGOF DETECTED in run {run_index}: "
-                        f"GPS distance={detection_gps_distance:.2f} m, "
-                        f"OF distance={detection_of_distance:.2f} m, "
-                        f"error={detection_error:.2f} m, "
-                        f"distance after spoof start={detection_delay_distance:.2f} m"
-                    )
-
-            if TEST_PRINTING and MANUAL_STEPS:
-                print(f"Gps distance: {total_gps_distance}, OF distance: {total_of_distance}")
-                print(f"ssdgof_error: {ssdgof_error}")
-                input("")
-
-        max_ssdgof_error = max(max_ssdgof_error, run_max_ssdgof_error)
-
-        if TEST_PRINTING:
-            print(f"\nSSDGOF results run: {run_index}")
-            print("--------------------------------------")
-            print(f"SSDGOF run max error: {run_max_ssdgof_error}")
-            print(f"SSDGOF current overall max error: {max_ssdgof_error}")
-
-            if ssdgof_detected:
-                print(
-                    f"SSDGOF spoofing detected during this run, "
-                    f"{detection_delay_seconds:.1f}s after spoofing started."
-                )
-                print(
-                    f"Detection GPS distance: {detection_gps_distance:.2f} m, "
-                    f"OF distance: {detection_of_distance:.2f} m, "
-                    f"SSDGOF error: {detection_error:.2f} m, "
-                    f"distance after spoof start: {detection_delay_distance:.2f} m\n"
-                )
-            else:
-                print("SSDGOF did not detect during this run.\n")
-
-    if TEST_PRINTING:
-        print("\nSSDGOF overall max value")
-        print("--------------------------------------")
-        print(f"Max SSDGOF error: {max_ssdgof_error}\n")
-
-    return max_ssdgof_error
-
-
-# =====================================================
-# MAIN
-# =====================================================
-
-def main(filename_control: str, filename_spoofed: str) -> None:
+                    print(f"SSDGOF DETECTED in run {run}")
+                    print(f"GPS distance: {detection_gps_distance:.2f} m")
+                    print(f"OF distance: {detection_of_distance:.2f} m")
+                    print(f"SSDGOF error: {detection_error:.2f} m\n")
+ 
+        if total_gps_distance > SPOOF_START_DISTANCE and ssdgof_detected is False:
+            updates_to_detection += 1
+ 
+        used_rows += 1
+        i += 1
+ 
+        if TEST_PRINTING and MANUAL_STEPS:
+            print(f"Gps distance: {total_gps_distance}, OF distance: {total_of_distance}")
+            print(f"ssdgof_error: {ssdgof_error}")
+            input("")
+ 
+    # Finish the last run if the file does not end with a marker row.
+    if used_rows > 0:
+        finish_run()
+ 
+    return max_ssdgof_error, stats
+ 
+ 
+def main(filename_control: str, filename_spoofed: str):
     data_normal = read_data(filename_control)
-    data_spoofed = read_data(filename_spoofed)
-
+    data_normal = remove_runs(data_normal, EXCLUDED_CONTROL_RUNS)
+ 
     dist_mean, gyro_mean = compute_means(data_normal)
-    dist_deviation, gyro_deviation = compute_deviation(data_normal, dist_mean, gyro_mean)
-
+    dist_diviation, gyro_deviation = compute_diviation(data_normal, dist_mean, gyro_mean)
+ 
+    data_spoofed = read_data(filename_spoofed)
+    data_spoofed = remove_runs(data_spoofed, EXCLUDED_SPOOFED_RUNS)
+ 
     if NORMALIZE:
-        k1 = DIST_K_NORMALIZED
-        k2 = GYRO_K_NORMALIZED
+        k1 = 0.25
+        k2 = 0.8
     else:
-        k1 = DIST_K_RAW
-        k2 = GYRO_K_RAW
-
-    print("\n============================================================")
-    print("CONTROL DATA STATISTICS")
-    print("============================================================")
-    print(f"Distance mean: {dist_mean}")
-    print(f"Distance standard deviation: {dist_deviation}")
-    print(f"Gyro mean: {gyro_mean}")
-    print(f"Gyro standard deviation: {gyro_deviation}")
-    print(f"Distance k: {k1}")
-    print(f"Gyro k: {k2}")
-    print(f"CUSUM threshold: {CUSUM_THRESHOLD}")
-    print(f"SSDGOF threshold: {SSDGOF_THRESHOLD}")
-
-    # Control analysis. CUSUM threshold -1 means no CUSUM spoof detection is reported;
-    # it is used to find maximum CUSUM values during normal flight.
-    max_dist_s_pos, max_dist_s_neg, max_gyro_s = test_cusum(
+        k1 = 0.0132
+        k2 = k1
+ 
+    max_dist_s_pos, max_dist_s_neg, max_gyro_s, cusum_control_stats = test_cusum(
         data_normal,
         dist_mean,
-        dist_deviation,
+        dist_diviation,
         k1,
         -1,
         gyro_mean,
         gyro_deviation,
         k2,
-        label="CONTROL",
+        label="CONTROL CALIBRATION",
+        is_spoofed_data=False,
     )
 
-    max_ssdgof_control = test_ssdgof(data_normal, SSDGOF_THRESHOLD, label="CONTROL")
-
-    # Spoofed analysis.
-    test_cusum(
+    control_smax = max(max_dist_s_pos, max_dist_s_neg)
+    threshold = control_smax * 1.1
+ 
+    max_ssdgof_control, ssdgof_control_stats = test_ssdgof(
+        data_normal,
+        SSDGOF_THRESHOLD,
+        label="CONTROL",
+        is_spoofed_data=False,
+    )
+ 
+    if TEST_PRINTING:
+        print("\n\nSPOOFED RUNS ANALYSIS:")
+        print("-------------------------------------------\n\n")
+ 
+    _, _, _, cusum_spoofed_stats = test_cusum(
         data_spoofed,
         dist_mean,
-        dist_deviation,
+        dist_diviation,
         k1,
-        CUSUM_THRESHOLD,
+        threshold,
         gyro_mean,
         gyro_deviation,
         k2,
         label="SPOOFED",
+        is_spoofed_data=True,
     )
+ 
+    max_ssdgof_spoofed, ssdgof_spoofed_stats = test_ssdgof(
+        data_spoofed,
+        SSDGOF_THRESHOLD,
+        label="SPOOFED",
+        is_spoofed_data=True,
+    )
+ 
+    print(f"Distance: \nMean: {dist_mean}    Standard diviation: {dist_diviation}")
+    print(f"Max s_pos: {max_dist_s_pos}, max s_neg: {max_dist_s_neg}\n")
+    print(f"Control s_max: {control_smax}") 
 
-    max_ssdgof_spoofed = test_ssdgof(data_spoofed, SSDGOF_THRESHOLD, label="SPOOFED")
-
-    print("\n============================================================")
-    print("FINAL SUMMARY")
-    print("============================================================")
-    print("Distance CUSUM:")
-    print(f"Mean: {dist_mean}")
-    print(f"Standard deviation: {dist_deviation}")
-    print(f"Max control s_pos: {max_dist_s_pos}")
-    print(f"Max control s_neg: {max_dist_s_neg}\n")
-
-    print("Gyro CUSUM:")
-    print(f"Mean: {gyro_mean}")
-    print(f"Standard deviation: {gyro_deviation}")
-    print(f"Max control gyro_s: {max_gyro_s}\n")
-
+    print(f"Gyro: \nMean: {gyro_mean}    Standard diviation: {gyro_deviation}")
+    print(f"Max s: {max_gyro_s}\n")
+ 
     print("SSDGOF:")
     print(f"Threshold: {SSDGOF_THRESHOLD}")
     print(f"Max SSDGOF error on control data: {max_ssdgof_control}")
     print(f"Max SSDGOF error on spoofed data: {max_ssdgof_spoofed}\n")
+ 
+    print("\n\nFINAL DETECTION COUNTS:")
+    print("======================================")
+    print_detection_stats(cusum_control_stats)
+    print_detection_stats(ssdgof_control_stats)
+    print_detection_stats(cusum_spoofed_stats)
+    print_detection_stats(ssdgof_spoofed_stats)
+ 
+    print("\n\nEXPERIMENT SETTINGS:")
+    print("======================================")
+    print(f"Control file: {filename_control}")
+    print(f"Spoofed file: {filename_spoofed}")
+    print(f"k1 distance CUSUM value: {k1}")
+    print(f"CUSUM threshold: {threshold}")
+    print(f"SSDGOF threshold: {SSDGOF_THRESHOLD}")
+    print(f"Spoofing start distance: {SPOOF_START_DISTANCE} m")
 
 
-if __name__ == "__main__":
-    if len(sys.argv) == 3:
-        control_file = sys.argv[1]
-        spoofed_file = sys.argv[2]
-    else:
-        control_file = DEFAULT_CONTROL_FILE
-        spoofed_file = DEFAULT_SPOOFED_FILE
+main("/home/isabella-lopiano/bachelor-project/PX4-Autopilot/turn_control_log_25_runs_filtered.csv", "/home/isabella-lopiano/bachelor-project/PX4-Autopilot/turn_spoofing100_log.csv")
 
-    main(control_file, spoofed_file)
+#main("/Users/isabellalopiano/thesis/PX4-Autopilot/turn_control_log.csv", "/Users/isabellalopiano/thesis/PX4-Autopilot/turn_spoofing100_log.csv")
+# main("flight_logs/straight_control_log.csv", "flight_logs/straight_spoofing25_log.csv")
+## main("/home/isabella-lopiano/bachelor-project/PX4-Autopilot/turn_control_log.csv", "/home/isabella-lopiano/bachelor-project/PX4-Autopilot/turn_spoofing100_log.csv")
+
+#main("/Users/isabellalopiano/thesis/PX4-Autopilot/turn_control_log.csv", "/Users/isabellalopiano/thesis/PX4-Autopilot/turn_spoofing100_log.csv")
+# main("flight_logs/straight_control_log.csv", "flight_logs/straight_spoofing25_log.csv")
+
