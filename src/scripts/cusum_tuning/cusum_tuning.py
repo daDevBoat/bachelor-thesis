@@ -15,8 +15,9 @@ COLUMNS = [
 TEST_PRINTING = True
 MANUAL_STEPS = False
 NORMALIZE = True
-TESTING_SPOOFED_RUNS = False
+TESTING_SPOOFED_RUNS = True
 SPOOF_START_DISTANCE = 100
+SSDGOF_THRESHOLD = 10
 
 
 def csv_sort_key(path: Path):
@@ -129,6 +130,63 @@ def cusum_abs(
 
     return s
 
+def ssdgof(total_of_distance: float, total_gps_distance: float):
+    return abs(total_of_distance - total_gps_distance) > SSDGOF_THRESHOLD
+
+def average(values: list[float]) -> float | None:
+    if len(values) == 0:
+        return None
+
+    return sum(values) / len(values)
+
+
+def make_detection_stats() -> dict:
+    return {
+        "detected_runs_after_spoof_start": 0,
+        "detection_times_after_spoof_s": [],
+        "detection_distances_after_spoof_m": [],
+    }
+
+
+def print_detection_summary(stats: dict) -> None:
+    detection_times = stats["detection_times_after_spoof_s"]
+    detection_distances = stats["detection_distances_after_spoof_m"]
+
+    print("Spoofed detection summary:")
+    print(
+        f"Detections after spoof start: "
+        f"{stats['detected_runs_after_spoof_start']}"
+    )
+
+    if detection_times:
+        print(f"Average detection time after spoof start: {average(detection_times):.2f} s")
+        print(f"Min detection time after spoof start: {min(detection_times):.2f} s")
+        print(f"Max detection time after spoof start: {max(detection_times):.2f} s")
+    else:
+        print("Average detection time after spoof start: N/A")
+        print("Min detection time after spoof start: N/A")
+        print("Max detection time after spoof start: N/A")
+
+    if detection_distances:
+        print(
+            f"Average detection distance after spoof start: "
+            f"{average(detection_distances):.2f} m"
+        )
+        print(
+            f"Min detection distance after spoof start: "
+            f"{min(detection_distances):.2f} m"
+        )
+        print(
+            f"Max detection distance after spoof start: "
+            f"{max(detection_distances):.2f} m"
+        )
+    else:
+        print("Average detection distance after spoof start: N/A")
+        print("Min detection distance after spoof start: N/A")
+        print("Max detection distance after spoof start: N/A")
+
+    print()
+
 
 def test_cusum(
     runs: list[DataFrame],
@@ -139,10 +197,12 @@ def test_cusum(
     mean2: float,
     sd2: float,
     k2: float,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, dict]:
     max_dist_s_pos = 0.0
     max_dist_s_neg = 0.0
     max_gyro_s = 0.0
+
+    detection_stats = make_detection_stats()
 
     for run_number, df in enumerate(runs, start=1):
         run_max_dist_s_pos = 0.0
@@ -251,6 +311,31 @@ def test_cusum(
         if run_max_gyro_s > max_gyro_s:
             max_gyro_s = run_max_gyro_s
 
+        detection_after_spoof_start = (
+            spoofed
+            and spoof_start_time_us is not None
+            and detection_time_us is not None
+            and detection_gps_distance is not None
+            and detection_gps_distance >= SPOOF_START_DISTANCE
+        )
+
+        if detection_after_spoof_start:
+            detection_delay_seconds = (
+                detection_time_us - spoof_start_time_us
+            ) / 1_000_000
+
+            detection_distance_after_spoof = (
+                detection_gps_distance - SPOOF_START_DISTANCE
+            )
+
+            detection_stats["detected_runs_after_spoof_start"] += 1
+            detection_stats["detection_times_after_spoof_s"].append(
+                detection_delay_seconds
+            )
+            detection_stats["detection_distances_after_spoof_m"].append(
+                detection_distance_after_spoof
+            )
+
         if TEST_PRINTING:
             print(f"Results run: {run_number}")
             print("--------------------------------------")
@@ -268,35 +353,28 @@ def test_cusum(
             if spoofed:
                 print("Spoofing detected during this run.")
 
+                if detection_after_spoof_start:
+                    print(
+                        f"Detection time after spoof start: "
+                        f"{detection_delay_seconds:.2f} s"
+                    )
+
+                    print(
+                        f"Detection distance after spoof start: "
+                        f"{detection_distance_after_spoof:.2f} m"
+                    )
+                else:
+                    print("Detection happened before spoof start distance was reached.")
+
                 if detection_gps_distance is not None:
                     print(f"Detection GPS distance: {detection_gps_distance:.2f} m")
 
                 if detection_of_distance is not None:
                     print(f"Detection OF distance: {detection_of_distance:.2f} m")
 
-                if (
-                    spoof_start_time_us is not None
-                    and detection_time_us is not None
-                ):
-                    detection_delay_seconds = (
-                        detection_time_us - spoof_start_time_us
-                    ) / 1_000_000
-
-                    print(
-                        f"Detection time after spoof start: "
-                        f"{detection_delay_seconds:.3f} s"
-                    )
-
-                    print(
-                        f"Detection distance after spoof start: "
-                        f"{detection_gps_distance - SPOOF_START_DISTANCE:.2f} m"
-                    )
-                else:
-                    print("Detection happened before spoof start distance was reached.")
-
                 print()
 
-    return max_dist_s_pos, max_dist_s_neg, max_gyro_s
+    return max_dist_s_pos, max_dist_s_neg, max_gyro_s, detection_stats
 
 
 def main(directory_control: str, directory_spoofed: str):
@@ -319,7 +397,7 @@ def main(directory_control: str, directory_spoofed: str):
         k1 = 0.0132
         k2 = k1
 
-    max_dist_s_pos, max_dist_s_neg, max_gyro_s = test_cusum(
+    max_dist_s_pos, max_dist_s_neg, max_gyro_s, _ = test_cusum(
         data_normal,
         dist_mean,
         dist_diviation,
@@ -334,26 +412,34 @@ def main(directory_control: str, directory_spoofed: str):
         print("\n\nSPOOFED RUNS ANALYSIS:")
         print("-------------------------------------------\n\n")
 
+    max_s_value = max(max_dist_s_pos, max_dist_s_neg)
+
+    spoofed_detection_stats = make_detection_stats()
+
     if TESTING_SPOOFED_RUNS:
-        test_cusum(
+        _, _, _, spoofed_detection_stats = test_cusum(
             data_spoofed,
             dist_mean,
             dist_diviation,
             k1,
-            21.7 * 1.1,
+            max_s_value * 1.1,
             gyro_mean,
             gyro_deviation,
             k2,
         )
 
+    print(f"\n\n\nData Summary:")
+    print("-------------------------------------------")
     print(f"Distance: \nMean: {dist_mean}    Standard diviation: {dist_diviation}")
     print(f"Max s_pos: {max_dist_s_pos}, max s_neg: {max_dist_s_neg}\n")
 
     print(f"Gyro: \nMean: {gyro_mean}    Standard diviation: {gyro_deviation}")
     print(f"Max s: {max_gyro_s}\n")
 
+    print_detection_summary(spoofed_detection_stats)
+
 
 main(
     "flight_logs/turns_control",
-    "flight_logs/turns_spoofing100",
+    "flight_logs/turns_spoofed_100",
 )
