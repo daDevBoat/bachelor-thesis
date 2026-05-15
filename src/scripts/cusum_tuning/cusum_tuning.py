@@ -16,7 +16,7 @@ TEST_PRINTING = False
 MANUAL_STEPS = False
 NORMALIZE = True
 TESTING_SPOOFED_RUNS = True
-SPOOF_START_DISTANCE = 100
+SPOOF_START_DISTANCE = 25
 SSDGOF_THRESHOLD = 10
 
 
@@ -669,8 +669,14 @@ def main(directory_control: str, directory_spoofed: str):
         ssdgof_spoofed_detection_stats,
     )
 
-
+"""
 main(
     "flight_logs/turns_control",
     "flight_logs/turns_spoofed_100",
+)
+"""
+
+main(
+    "flight_logs/straight_control",
+    "flight_logs/straight_spoofed_25",
 )
