@@ -14,11 +14,11 @@ COLUMNS = [
 ]
 
 TEST_PRINTING = True
-MANUAL_STEPS = True
-TEST_MANUAL_START = 4
+MANUAL_STEPS = False
+TEST_MANUAL_START = 3
 NORMALIZE = True
-TESTING_SPOOFED_RUNS = False
-SPOOF_START_DISTANCE = 65
+TESTING_SPOOFED_RUNS = True
+SPOOF_START_DISTANCE = 160
 
 
 def csv_sort_key(path: Path):
@@ -125,20 +125,23 @@ def cusum_abs(
     sd: float,
     s: float,
     k: float,
-    run_number: int,
+    upper_limit: float,
+    lower_limit: float,
 ) -> float:
     if NORMALIZE:
         Z = abs(diff - mean) / sd
     else:
         Z = abs(diff)
 
-    if Z < 0.2:
-        k = 0.5 * k
+    k = 0.25
 
-    if TEST_PRINTING and should_manual_step(run_number):
-        print(f"CUSUM ABS   Z: {Z}, k: {k}")
+    s = s + Z - k
+    s = max(s, lower_limit)
+    s = min(s, upper_limit)
 
-    s = max(0.0, s + Z - k)
+    if TEST_PRINTING and MANUAL_STEPS:
+        print(f"CUSUM ABS   Z: {Z}, k: {k}, s: {s}")
+
 
     return s
 
@@ -600,7 +603,8 @@ def test_cusum(
                 sd2,
                 gyro_s,
                 k2,
-                run_number,
+                20.15,
+                8.79
             )
 
             if threshold > 0:
@@ -618,7 +622,7 @@ def test_cusum(
                         ) / 1_000_000
 
             # Adaptive CUSUM here
-            adaptive_threshold = max(11.5, gyro_s)
+            adaptive_threshold = gyro_s
 
             if not adaptive_detected and (
                 dist_s_pos > adaptive_threshold
@@ -949,7 +953,7 @@ def main(directory_control: str, directory_spoofed: str):
 
     if NORMALIZE:
         k1 = 0.25
-        k2 = 0.8
+        k2 = 0.5
     else:
         k1 = 0.0132
         k2 = k1
@@ -1003,12 +1007,12 @@ def main(directory_control: str, directory_spoofed: str):
             _,
         ) = test_cusum(
             data_spoofed,
-            dist_mean,
-            dist_diviation,
+            0.01285,
+            0.1360,
             k1,
-            max_s_value * 1.1,
-            gyro_mean,
-            gyro_deviation,
+            20.15,
+            0.00218,
+            0.05018,
             k2,
         )
 
@@ -1091,6 +1095,6 @@ main(
 #"""
 main(
     "flight_logs/blind_control",
-    "flight_logs/straight_spoofed_25",
+    "flight_logs/blind_spoofed_160",
 )
 #"""
