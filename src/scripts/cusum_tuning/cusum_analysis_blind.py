@@ -133,8 +133,6 @@ def cusum_abs(
     else:
         Z = abs(diff)
 
-    k = 0.25
-
     s = s + Z - k
     s = max(s, lower_limit)
     s = min(s, upper_limit)
