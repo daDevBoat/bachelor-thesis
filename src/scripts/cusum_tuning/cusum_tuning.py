@@ -19,19 +19,30 @@ TEST_MANUAL_START = 9
 NORMALIZE = True
 TESTING_SPOOFED_RUNS = True
 SPOOF_START_DISTANCE = 140
+LOGGING = True
 
-csv_file = Path("plot_files/run22_140.csv")
+csv_file = Path("plot_files/run22_140_spoofed.csv")
 
 # Create file with headers if it does not exist yet
+if LOGGING:
+    with csv_file.open("w", newline="") as file:
+        writer = csv.writer(file)
+        #writer.writerow(["timestamp", "value1", "value2", "value3"])
 
-with csv_file.open("w", newline="") as file:
-    writer = csv.writer(file)
-    writer.writerow(["timestamp", "value1", "value2", "value3"])
-
-def log_data(time, value1, value2, value3):
+def log_data(x, value1, value2, value3):
     with csv_file.open("a", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow([time, value1, value2, value3])
+        writer.writerow([x, value1, value2, value3])
+
+def log_data2(x, value1, value2):
+    with csv_file.open("a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow([x, value1, value2])
+
+def log_data1(x, value1):
+    with csv_file.open("a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow([x, value1])
 
 
 def csv_sort_key(path: Path):
@@ -620,9 +631,9 @@ def test_cusum(
                 8.79
             )
 
-            if total_gps_distance > 1.0 and run_number == 22 and threshold < 0:
+            if total_gps_distance > 1.0 and run_number == 22 and threshold > 0 and True:
                 time = (row.time_us - run_start_time_us) / 1000000
-                log_data(total_of_distance, gyro_s, max(dist_s_pos, dist_s_neg), 0)
+                log_data(total_of_distance, gyro_s, dist_s_pos, dist_s_neg)
 
 
             if threshold > 0:

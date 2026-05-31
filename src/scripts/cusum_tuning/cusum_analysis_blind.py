@@ -953,7 +953,7 @@ def main(directory_control: str, directory_spoofed: str):
 
     if NORMALIZE:
         k1 = 0.25
-        k2 = 0.5
+        k2 = 0.25
     else:
         k1 = 0.0132
         k2 = k1
