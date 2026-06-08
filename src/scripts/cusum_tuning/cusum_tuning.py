@@ -18,11 +18,10 @@ MANUAL_STEPS = False
 TEST_MANUAL_START = 9
 NORMALIZE = True
 TESTING_SPOOFED_RUNS = True
-SPOOF_START_DISTANCE = 140
-LOGGING = True
+SPOOF_START_DISTANCE = 25
+LOGGING = False
 
 csv_file = Path("plot_files/run22_140_spoofed.csv")
-
 # Create file with headers if it does not exist yet
 if LOGGING:
     with csv_file.open("w", newline="") as file:
@@ -1109,23 +1108,23 @@ def main(directory_control: str, directory_spoofed: str):
     )
 
 
-#"""
+"""
 main(
     "flight_logs/turns_control",
     "flight_logs/turns_spoofed_140",
 )
+"""
+
+"""
+main(
+    "flight_logs/straight_control",
+    "flight_logs/straight_spoofed_25",
+)
+"""
+
 #"""
-
-"""
 main(
     "flight_logs/straight_control",
     "flight_logs/straight_spoofed_25",
 )
-"""
-
-"""
-main(
-    "flight_logs/straight_control",
-    "flight_logs/straight_spoofed_25",
-)
-"""
+#"""
