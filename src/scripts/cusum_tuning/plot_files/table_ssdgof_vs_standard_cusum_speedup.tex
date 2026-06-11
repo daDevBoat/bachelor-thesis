@@ -1,0 +1,19 @@
+\begin{table}[ht]
+\centering
+\caption{Speedup from SSDGOF to Standard CUSUM}
+\label{tab:ssdgof_standard_cusum_speedup}
+\begin{tabular}{lrrrrr}
+\toprule
+Path & $n$ & Mean SSDGOF (s) & Mean Standard CUSUM (s) & Speedup & Avg. improvement \\
+\midrule
+straight spoofed 25 & 25 & 8.259 & 2.365 & 3.492$\times$ & 70.97\% \\
+turns spoofed 100 & 15 & 55.527 & 5.319 & 10.439$\times$ & 90.13\% \\
+turns spoofed 140 & 2 & 38.035 & 17.705 & 2.148$\times$ & 54.41\% \\
+turns spoofed 275 & 22 & 17.110 & 12.342 & 1.386$\times$ & 26.02\% \\
+blind spoofed 65 & 25 & 30.332 & 5.204 & 5.829$\times$ & 82.71\% \\
+blind spoofed 160 & 0 & NaN & NaN & NaN$\times$ & NaN\% \\
+\midrule
+\textbf{All included runs} & \textbf{89} & \textbf{25.283} & \textbf{6.471} & \textbf{3.907$\times$} & \textbf{66.01\%} \\
+\bottomrule
+\end{tabular}
+\end{table}

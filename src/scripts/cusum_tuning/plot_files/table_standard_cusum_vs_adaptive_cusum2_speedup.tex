@@ -1,0 +1,18 @@
+\begin{table}[ht]
+\centering
+\caption{Speedup from Standard CUSUM to Adaptive CUSUM$^2$}
+\label{tab:standard_cusum_adaptive_cusum2_speedup}
+\begin{tabular}{lrrrrr}
+\toprule
+Path & $n$ & Mean Standard CUSUM (s) & Mean Adaptive CUSUM$^2$ (s) & Speedup & Avg. improvement \\
+\midrule
+turns spoofed 100 & 25 & 5.226 & 4.667 & 1.120$\times$ & 9.83\% \\
+turns spoofed 140 & 25 & 23.056 & 12.894 & 1.788$\times$ & 38.88\% \\
+turns spoofed 275 & 24 & 12.795 & 11.314 & 1.131$\times$ & 10.26\% \\
+blind spoofed 65 & 25 & 5.204 & 3.903 & 1.333$\times$ & 24.95\% \\
+blind spoofed 160 & 25 & 7.937 & 7.326 & 1.083$\times$ & 7.32\% \\
+\midrule
+\textbf{All included runs} & \textbf{124} & \textbf{10.828} & \textbf{7.994} & \textbf{1.354$\times$} & \textbf{18.31\%} \\
+\bottomrule
+\end{tabular}
+\end{table}

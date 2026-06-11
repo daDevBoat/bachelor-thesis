@@ -21,7 +21,7 @@ TESTING_SPOOFED_RUNS = True
 SPOOF_START_DISTANCE = 140
 LOGGING = True
 
-csv_file = Path("plot_files/uncapped_gyro.csv")
+csv_file = Path("plot_files/test_log.csv")
 # Create file with headers if it does not exist yet
 if LOGGING:
     with csv_file.open("w", newline="") as file:
@@ -159,8 +159,8 @@ def cusum_abs(
     k = 0.25
 
     s = s + Z - k
-    #s = max(s, lower_limit)
-    #s = min(s, upper_limit)
+    s = max(s, lower_limit)
+    s = min(s, upper_limit)
 
     if TEST_PRINTING and MANUAL_STEPS:
         print(f"CUSUM ABS   Z: {Z}, k: {k}, s: {s}")
@@ -630,9 +630,9 @@ def test_cusum(
                 8.79
             )
 
-            if total_gps_distance > 1.0 and run_number == 22 and threshold < 0 and LOGGING:
-                time = (row.time_us - run_start_time_us) / 1000000
-                log_data(total_of_distance, gyro_s, dist_s_pos, dist_s_neg)
+            if total_gps_distance > 1.0 and threshold < 0 and LOGGING:
+                #if abs(dist_diff) > 0.25:
+                log_data(gyro_s, max(dist_s_pos, dist_s_neg), dist_s_pos, dist_s_neg)
 
 
             if threshold > 0:

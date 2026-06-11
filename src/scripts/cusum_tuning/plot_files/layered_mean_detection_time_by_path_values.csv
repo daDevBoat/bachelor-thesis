@@ -1,0 +1,7 @@
+Path,Mean_SSDGOF_time_s,Mean_Standard_CUSUM_time_s,Mean_Adaptive_CUSUM2_time_s,SSDGOF_n,Standard_CUSUM_n,Adaptive_CUSUM2_n
+straight spoofed 25,8.2588,2.3652,NaN,25,25,0
+turns spoofed 100,55.5273333333333,5.226,4.6672,15,25,25
+turns spoofed 140,38.035,23.0556,12.8944,2,25,25
+turns spoofed 275,17.1104545454545,12.6048,11.31375,22,25,24
+blind spoofed 65,30.3316,5.2036,3.9032,25,25,25
+blind spoofed 160,NaN,7.9372,7.3256,0,25,25

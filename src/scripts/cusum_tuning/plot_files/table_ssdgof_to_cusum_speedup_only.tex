@@ -1,0 +1,29 @@
+\begin{table}[!ht]
+\centering
+\scriptsize
+\caption{Speedup from SSDGOF to standard CUSUM}
+\label{tab:ssdgof_to_cusum_speedup}
+\begin{tabular}{|p{0.42\textwidth}|c|}
+\hline
+\textbf{Flight path} & \textbf{Speedup factor} \\
+\hline
+Straight path & 3.492$\times$ \\
+\hline
+Path with multiple $90^\circ$ turns & 10.439$\times$ \\
+\hline
+Path with multiple $90^\circ$ turns & 2.148$\times$ \\
+\hline
+Path with multiple $90^\circ$ turns & 1.386$\times$ \\
+\hline
+Blind path & 5.829$\times$ \\
+\hline
+Blind path & --$^{*}$ \\
+\hline
+\textbf{Average across all runs} & \textbf{3.907$\times$} \\
+\hline
+\end{tabular}
+
+\vspace{0.5em}
+\raggedright
+\scriptsize{$^{*}$No speedup factor is reported because SSDGOF did not detect spoofing in any runs.}
+\end{table}

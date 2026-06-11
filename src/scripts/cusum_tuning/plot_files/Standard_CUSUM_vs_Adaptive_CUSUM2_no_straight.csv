@@ -1,0 +1,6 @@
+Path,Standard_CUSUM_n,Adaptive_CUSUM2_n,Mean_Standard_CUSUM_time_s,Mean_Adaptive_CUSUM2_time_s
+turns spoofed 100,25,25,5.226,4.6672
+turns spoofed 140,25,25,23.0556,12.8944
+turns spoofed 275,25,24,12.6048,11.31375
+blind spoofed 65,25,25,5.2036,3.9032
+blind spoofed 160,25,25,7.9372,7.3256
